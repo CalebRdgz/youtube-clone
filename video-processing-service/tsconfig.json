@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "es6", // which version of Javascript were using
+    "module": "commonjs", // typically want commonjs for Node projects
+    "rootDir": "src", // all code written will be in "src" folder
+    "outDir": "dist", // output directory (final build files) is "dist" by default
+    "strict": true, // configuration for type checking
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*.ts"], // we want to include all typescript files within src directory
+  "exclude": ["node_modules"] // exclude all node_modules files (default, can pass more files)
+}
