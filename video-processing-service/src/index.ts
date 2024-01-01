@@ -1,10 +1,56 @@
 import express from "express"
-import Ffmpeg from "fluent-ffmpeg"
+import { convertVideo, deleteProcessedVideo, deleteRawVideo, downloadRawVideo, setupDirectories, uploadProcessedVideo } from "./storage";
 //create local express server
+
+setupDirectories();
 
 //initialize the express app:
 const app = express();
 app.use(express.json()); //middleware to handle the JSON requests
+//this endpoint wont be invoked by user or us, but by Pub/Sub message queue:
+app.post("/process-video", async (req, res) => {
+    //Get the bucket and filename from the Cloud Pub/Sub message
+    let data;
+    try {
+        const message = Buffer.from(req.body.message.data, 'base64').toString('utf8');
+        data = JSON.parse(message); //parse the data from JSON string to Javascript
+        if (!data.name) {
+            throw new Error('Invalid message payload received.')
+        }
+    } catch (error) {
+        console.error(error);
+        return res.status(400).send('Bad Request: missing filename.')
+    }
+
+    //define the file names:
+    const inputFileName = data.name;
+    //this is what we call the output file after processing it:
+    const outputFileName = `processed-${inputFileName}`
+
+    //Download the raw video from Cloud Storage:
+    await downloadRawVideo(inputFileName);
+
+    //Convert the video to 360p
+    try {
+        await convertVideo(inputFileName, outputFileName); //await = wait to finish converting before uploading
+    } catch (err) {
+        await Promise.all([deleteRawVideo(inputFileName),
+        deleteProcessedVideo(outputFileName)
+        ]);
+        console.error(err);
+        return res.status(500).send('Internal Server Error: video processing failed.')
+    }
+
+    //Upload the processed video to Cloud Storage:
+    await uploadProcessedVideo(outputFileName);
+
+    await Promise.all([
+      deleteRawVideo(inputFileName),
+      deleteProcessedVideo(outputFileName),
+    ]);
+
+    return res.status(200).send('Processing finished successfully.')
+});
 
 //simple route with root path which takes in request and response
 //Define our HTTP POST endpoint:
@@ -17,19 +63,6 @@ app.post("/process-video", (req, res) => {
   if (!inputFilePath || !outputFilePath) {
     res.status(400).send("Bad Request: Missing file path.") //send error 400 - client(user) error
   }
-  //Actually converting the video:
-  Ffmpeg(inputFilePath) //running imported ffmpeg and call it on the input file
-    .outputOptions("-vf", "scale=-1:360") //(video file, scale video resolution to 360p)
-    //chain this^ with "end" and "error" events:
-    .on("end", () => {
-        //Anonymous Function
-        res.status(200).send("Video processing finished successfully.");
-    })
-    .on("error", (err) => { //anonymous function with the (err) object
-        console.log(`An error occurred: ${err.message}`)
-        res.status(500).send(`Internal Server Error: ${err.message}`) //send internal server error
-    })
-    .save(outputFilePath);
 });
 
 //if process.env.PORT is undefined, set port as 3000:
